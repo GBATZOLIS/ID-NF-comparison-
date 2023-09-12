@@ -9,7 +9,8 @@ import torch.nn.functional as F
 import torch.distributions as D
 from torch.utils.data import DataLoader, TensorDataset
 import sys
-
+from torch.utils.tensorboard import SummaryWriter
+from tqdm import tqdm
 import math
 import numpy as np
 import os
@@ -111,13 +112,13 @@ with torch.no_grad():
 
 ##this function can be used to track the sing. values training trajectory 
 def evaluate_model(model, step ,args):
-    first_batch = np.load(os.path.join(args.output_dir, 'first_batch.npy'))
+    first_batch = np.load(os.path.join(exp_dir, 'first_batch.npy'))
     x = torch.from_numpy(first_batch).to(args.device, torch.float)
     
     model.eval()
     z_, logdet_ = model(x)
     log_probs = torch.sum(model.base_dist.log_prob(z_)+ logdet_, dim=1) 
-    np.save(os.path.join(args.output_dir, 'log_probs_' + str(step) +'.npy'),log_probs.detach().cpu().numpy()) 
+    np.save(os.path.join(exp_dir, 'log_probs_' + str(step) +'.npy'),log_probs.detach().cpu().numpy()) 
      
     
     train_loader = torch.utils.data.DataLoader(x,batch_size=1, shuffle=False)
@@ -139,19 +140,17 @@ def evaluate_model(model, step ,args):
         L,_ = torch.eig(jac_mat)
         eig_values[i,:,:] = L.detach().cpu().numpy()
         
-    np.save(os.path.join(args.output_dir, 'sing_values_' + str(np.int(os.getenv('SLURM_ARRAY_TASK_ID'))-1) +'.npy'),sing_values) 
-    # np.save(os.path.join(args.output_dir, 'eig_values_' + str(step) +'.npy'),eig_values) 
+    np.save(os.path.join(exp_dir, 'sing_values_' + str(np.int(os.getenv('SLURM_ARRAY_TASK_ID'))-1) +'.npy'),sing_values) 
 
 # --------------------
 # Training
 # --------------------
-def train_flow(model, train_set, val_set, loss_fn, optimizer, scheduler, args, double_precision=False):
-    losses = []
+def train_flow(model, train_set, val_set, loss_fn, optimizer, scheduler, args, sub_writer, double_precision=False):
     best_loss = np.inf
     dtype = torch.double if double_precision else torch.float
     
-    assert train_set.shape[1] == args.datadim
-    assert val_set.shape[1] == args.datadim
+    assert train_set.shape[1] == args.data_dim
+    assert val_set.shape[1] == args.data_dim
     assert args.ID_samples <= args.batch_size
     
     training_set = NumpySet(train_set,device=args.device,dtype=dtype)
@@ -171,27 +170,41 @@ def train_flow(model, train_set, val_set, loss_fn, optimizer, scheduler, args, d
     # pin_memory=self.run_on_gpu,
     #num_workers=n_workers,
             )
+
+    no_improvement_count = 0  # Initialize a counter for the number of epochs without validation loss improvement
+
     for epoch in range(args.N_epochs):
-        logger.info("starting epoch ", epoch)
-        for step, batch in enumerate(train_loader):
+        logger.info("epoch %d" % epoch)
+        cumulative_train_loss = 0.0  # To accumulate loss for the whole epoch
+        # Set up the progress bar
+        pbar = tqdm(enumerate(train_loader), total=len(train_loader))
+        for step, batch in pbar:
             model.train()
             
             if step+1 == 1:
                 #saving first batch which will be used for calculating the singular values
-                np.save(os.path.join(args.output_dir, 'first_batch.npy'), batch.detach().cpu().numpy())
+                np.save(os.path.join(exp_dir, 'first_batch.npy'), batch.detach().cpu().numpy())
               
-            x = batch
-            
-            if args.sig2 >0:
+            x = batch            
+            if args.sig2 > 0:
                 if args.noise_type == 'gaussian':
                     noise = np.sqrt(args.sig2) * np.random.randn(*x.shape)
+                    noise = torch.tensor(noise, dtype=x.dtype, device=x.device)
                 else:
                     raise NotImplementedError
                 x_tilde = x + noise
             else:
                 x_tilde = x
-                
-            loss = loss_fn(model, x_tilde)  
+            
+            loss = loss_fn(model, x_tilde)
+            cumulative_train_loss += loss.item()
+
+            #code to update the progress bar
+            avg_train_loss_for_step = cumulative_train_loss / (step+1)
+            pbar.set_description(f"Epoch {epoch+1}, Avg Loss: {avg_train_loss_for_step:.4f}")
+
+            # Log train loss for this step
+            sub_writer.add_scalar('Loss/train_step', loss.item(), (epoch * len(train_loader)) + step)
                    
             optimizer.zero_grad()
             loss.backward()
@@ -204,16 +217,31 @@ def train_flow(model, train_set, val_set, loss_fn, optimizer, scheduler, args, d
                       'state_dict': model.state_dict(),
                       'optimizer' : optimizer.state_dict(),
                       'scheduler' : scheduler.state_dict()}
-        torch.save(checkpoint , os.path.join(args.output_dir, 'checkpoint.pt'))
+        torch.save(checkpoint , os.path.join(exp_dir, 'checkpoint.pt'))
         
-        #validation for last 20 epochs, kind of arbitrarily - feel free to adjust
-        if epoch+1 > args.N_epochs - 20:
-            val_loss =  validate_flow(model, val_loader, loss_fn)
-            if val_loss < best_loss:
-                best_loss = val_loss
-                # save model
-                checkpoint = {'step': epoch, 'state_dict': model.state_dict()}
-                torch.save(checkpoint , os.path.join(args.output_dir, 'checkpoint_best.pt'))    
+        # Compute and log average train loss for this epoch
+        avg_train_loss = cumulative_train_loss / len(train_loader)
+        sub_writer.add_scalar('Loss/train_epoch', avg_train_loss, epoch)
+
+        #TREATMENT OF THE VALIDATION LOSS AND EARLY STOPPING
+        val_loss =  validate_flow(model, val_loader, loss_fn)
+
+        # Log validation loss for this epoch
+        sub_writer.add_scalar('Loss/val_epoch', val_loss, epoch)
+
+        if val_loss < best_loss:
+            best_loss = val_loss
+            no_improvement_count = 0  # Reset the counter when there's an improvement
+            checkpoint = {'step': epoch, 'state_dict': model.state_dict()}
+            torch.save(checkpoint , os.path.join(exp_dir, 'checkpoint_best.pt'))
+        else:
+            no_improvement_count += 1  # Increment the counter when there's no improvement
+
+        # Stop training if the validation loss hasn't improved for 20 epochs
+        if no_improvement_count >= 20:
+            logger.info("Stopping training early as validation loss hasn't improved for 20 epochs.")
+            break
+
                 
 
 if __name__ == '__main__':
@@ -242,83 +270,90 @@ if __name__ == '__main__':
     #alternatively, define your own sigma values, these are the one used for the toy examples in the paper
     #sigmas = [0,1e-09, 5e-09, 1e-08, 5e-08, 1e-07, 5e-07,1e-06,5e-06,0.00001,0.00005,0.0001,0.0005,0.001,0.005,0.01,0.05,0.1,0.25,0.5,1.0,2.0, 3.0, 4.0,  6.0 , 8.0, 10.0 ]
     
-    #selects one noise magnitude depending on task-ID, say k+1
-    args.sig2 = sigmas[np.int(os.getenv('SLURM_ARRAY_TASK_ID'))-1]
-    
     logging.basicConfig(format="%(asctime)-5.5s %(name)-20.20s %(levelname)-7.7s %(message)s", datefmt="%H:%M", level=logging.DEBUG if args.debug else logging.INFO)
     logger.info("Hi!")
-    
-    #string for output directory of this NF run
-    param_string = 'sig2_'+str(np.int(os.getenv('SLURM_ARRAY_TASK_ID'))-1)+'_seed_'+str(args.seed)
-    
-    #defines output directory: "results/dataset/noise_type/data_dim/sig2_k_seed_0"
-    original_output_dir = os.path.join(args.output_dir, args.dataset)
-    args.output_dir = os.path.join(args.output_dir, args.dataset, args.noise_type, str(args.data_dim), param_string) 
-    if not os.path.isdir(args.output_dir): os.makedirs(args.output_dir) #create output directory if does not exists
 
-    #instantiate model
-    args.device = torch.device('cuda:{}'.format(args.cuda) if args.cuda is not None and torch.cuda.is_available() else 'cpu')
-    np.random.seed(args.seed)
-    torch.manual_seed(args.seed)
-    if args.device.type == 'cuda': torch.cuda.manual_seed(args.seed)
     
-    model = BNAF(args.data_dim, args.n_hidden, args.hidden_dim).to(args.device)
+    exp_base_dir = os.path.join(args.output_dir, args.dataset, args.noise_type, str(args.data_dim))
+
+    #selects one noise magnitude depending on task-ID, say k+1
+    for i in range(len(sigmas)):
+        args.sig2 = sigmas[i]
     
-    # save settings
-    config = 'Parsed args:\n{}\n\n'.format(pprint.pformat(args.__dict__)) + \
-             'Num trainable params: {:,.0f}\n\n'.format(sum(p.numel() for p in model.parameters())) + \
-             'Model:\n{}'.format(model)
-    config_path = os.path.join(args.output_dir, 'config.txt')
-    if not os.path.exists(config_path):
-        with open(config_path, 'a') as f:
-            print(config, file=f)
+        #string for output directory of this NF run
+        param_string = 'sig2_' + '%d' % i + '_seed_' + str(args.seed)
+        exp_dir = os.path.join(exp_base_dir, param_string) 
+        if not os.path.isdir(exp_dir): os.makedirs(exp_dir) #create output directory if does not exists
+
+        #instantiate model
+        args.device = torch.device('cuda:{}'.format(args.cuda) if args.cuda is not None and torch.cuda.is_available() else 'cpu')
+        np.random.seed(args.seed)
+        torch.manual_seed(args.seed)
+        if args.device.type == 'cuda': torch.cuda.manual_seed(args.seed)
     
-    ####################################################
-    ################# TRAINING PART $$$$$$$$$$$$$$$$$$$$
-    loss_fn = compute_kl_pq_loss
-    if args.train:
-        if args.optim == 'adam':
-            optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
-            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=args.lr_decay, patience=args.lr_patience, verbose=True)
-        elif args.optim == 'SGD':
-            optimizer = torch.optim.SGD(model.parameters(), lr=args.lr)  
-            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=args.lr_decay, patience=args.lr_patience, verbose=True)
-        else:
-            raise RuntimeError('Invalid `optimizer`.')
-        if args.restore_file:
-            model, optimizer, scheduler, args.step = load_checkpoint(args.output_dir,model,optimizer,scheduler)
-        train_flow(model, train_set, val_set, loss_fn, optimizer, scheduler, args)
+        model = BNAF(args.data_dim, args.n_hidden, args.hidden_dim).to(args.device)
+    
+        # save settings
+        config = 'Parsed args:\n{}\n\n'.format(pprint.pformat(args.__dict__)) + \
+                'Num trainable params: {:,.0f}\n\n'.format(sum(p.numel() for p in model.parameters())) + \
+                'Model:\n{}'.format(model)
+        config_path = os.path.join(exp_dir, 'config.txt')
+        if not os.path.exists(config_path):
+            with open(config_path, 'a') as f:
+                print(config, file=f)
+    
+        ####################################################
+        ################# TRAINING PART $$$$$$$$$$$$$$$$$$$$
+        loss_fn = compute_kl_pq_loss
+        if args.train:
+            if args.optim == 'adam':
+                optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+                scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=args.lr_decay, patience=args.lr_patience, verbose=True)
+            elif args.optim == 'SGD':
+                optimizer = torch.optim.SGD(model.parameters(), lr=args.lr)  
+                scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=args.lr_decay, patience=args.lr_patience, verbose=True)
+            else:
+                raise RuntimeError('Invalid `optimizer`.')
+            if args.restore_file:
+                model, optimizer, scheduler, args.step = load_checkpoint(exp_dir,model,optimizer,scheduler)
+            
+            sub_writer = SummaryWriter(exp_dir) #tensorboard writer
+            train_flow(model, train_set, val_set, loss_fn, optimizer, scheduler, args, sub_writer)
+            sub_writer.close()
     
         
-    ####################################################
-    ################# EVALUATION PART ##################
-    logger.info("Calculating singular values on first batch:")
-    model, optimizer, scheduler, args.step = load_checkpoint(args.output_dir,model,best=True)
+        ####################################################
+        ################# EVALUATION PART ##################
+        logger.info("Calculating singular values on first batch:")
+        model, optimizer, scheduler, args.step = load_checkpoint(exp_dir,model,best=True)
+        
+        if args.ID_samples > args.batch_size:
+            args.ID_samples = args.batch_size
+
+        first_batch = np.load(os.path.join(exp_dir, 'first_batch.npy'))[:args.ID_samples,:]
+        x = torch.from_numpy(first_batch).to(args.device, torch.float)  
     
-    first_batch = np.load(os.path.join(args.output_dir, 'first_batch.npy'))[:args.ID_samples,:]
-    x = torch.from_numpy(first_batch).to(args.device, torch.float)  
-    
-    model.eval()
-    z_, logdet_ = model(x)
-    log_probs = torch.sum(model.base_dist.log_prob(z_)+ logdet_, dim=1) 
-    np.save(os.path.join(args.output_dir, 'log_probs_' + str(np.int(os.getenv('SLURM_ARRAY_TASK_ID'))-1) +'.npy'),log_probs.detach().cpu().numpy()) 
+        model.eval()
+        z_, logdet_ = model(x)
+        log_probs = torch.sum(model.base_dist.log_prob(z_)+ logdet_, dim=1) 
+        np.save(os.path.join(exp_dir, 'log_probs_' + '%d' % i +'.npy'),log_probs.detach().cpu().numpy()) 
      
-    train_loader = torch.utils.data.DataLoader(x,batch_size=1, shuffle=False)
+        train_loader = torch.utils.data.DataLoader(x, batch_size=1, shuffle=False)
     
-    sing_values = np.zeros([args.batch_size,args.data_dim])
+        sing_values = np.zeros([args.batch_size, args.data_dim])
     
-    for i, batch_data in enumerate(train_loader, 0):
-        x = batch_data[0:1,:]
-        x_ = torch.autograd.Variable(x)
-        jac_ = torch.autograd.functional.jacobian(model.encode,x_)
-        jac_mat = jac_.reshape([args.data_dim,args.data_dim]) 
-        U,S_x,V = torch.svd(jac_mat)
-        sing_values[i,:] = S_x.detach().cpu().numpy()
-        # L,_ = torch.eig(jac_mat)
-        # eig_values[i,:,:] = L.detach().cpu().numpy()
+        for i, batch_data in enumerate(train_loader, 0):
+            x = batch_data[0:1,:]
+            x_ = torch.autograd.Variable(x)
+            jac_ = torch.autograd.functional.jacobian(model.encode,x_)
+            jac_mat = jac_.reshape([args.data_dim,args.data_dim]) 
+            U,S_x,V = torch.svd(jac_mat)
+            sing_values[i,:] = S_x.detach().cpu().numpy()
+            # L,_ = torch.eig(jac_mat)
+            # eig_values[i,:,:] = L.detach().cpu().numpy()
         
-    np.save(os.path.join(args.output_dir, 'sing_values_' + str(np.int(os.getenv('SLURM_ARRAY_TASK_ID'))-1) +'.npy'),sing_values) 
-    #np.save(os.path.join(args.output_dir, 'eig_values_' + str(np.int(os.getenv('SLURM_ARRAY_TASK_ID'))-1) +'.npy'),eig_values) 
+        np.save(os.path.join(exp_dir, 'sing_values_' + '%d' % i +'.npy'),sing_values) 
+        #np.save(os.path.join(args.output_dir, 'eig_values_' + str(np.int(os.getenv('SLURM_ARRAY_TASK_ID'))-1) +'.npy'),eig_values) 
     
     logger.info("All done...have an amazing day!")
     
