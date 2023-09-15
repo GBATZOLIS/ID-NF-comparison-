@@ -34,6 +34,10 @@ from models import BlockNeuralAutoregressiveFlow as BNAF
 from utils import load_checkpoint
 
 from torch.utils.data import DataLoader
+import io
+import matplotlib.pyplot as plt
+import PIL
+from torchvision import transforms
 # from utils import create_filename
 
 logger = logging.getLogger(__name__)
@@ -59,7 +63,7 @@ parser.add_argument('--step', type=int, default=0, help='Current step of trainin
 parser.add_argument('--batch_size', type=int, default=200, help='Training batch size.')
 parser.add_argument('--lr', type=float, default=1e-1, help='Initial learning rate.')
 parser.add_argument('--lr_decay', type=float, default=0.5, help='Learning rate decay.')
-parser.add_argument('--lr_patience', type=float, default=2000, help='Number of steps before decaying learning rate.')
+parser.add_argument('--lr_patience', type=float, default=500, help='Number of steps before decaying learning rate.') #default:2000
 parser.add_argument('--log_interval', type=int, default=50, help='How often to save model and samples.')
 parser.add_argument("--noise_type", type=str, default="gaussian", help="Noise type: gaussian, normal (if possible)")
 parser.add_argument('--optim', type=str, default='adam', help='Which optimizer to use?')
@@ -110,37 +114,73 @@ with torch.no_grad():
             losses_val += batch_loss.item()
         return losses_val/len(val_loader)
 
+
+def plot_spectrum(singular_values, return_tensor=False, title='Spectrum', ground_truth=None, yaxis='normal'):    
+    plt.rcParams.update({'font.size': 24})
+    plt.figure(figsize=(15,10))
+    plt.grid(alpha=0.5)
+    plt.title(title)
+    plt.xticks(np.arange(0, len(singular_values[0])+1, 10))
+
+    if yaxis == 'log':
+        plt.yscale('log')  # Set the y-axis to logarithmic scale
+
+    if ground_truth:
+        if isinstance(ground_truth, list):
+            for gt in ground_truth:
+                plt.axvline(x=len(singular_values[0])-gt, color='red', ls='--')
+        else:
+            plt.axvline(x=len(singular_values[0])-ground_truth, color='red', ls='--')
+
+    for sing_vals in singular_values:
+        #plt.bar(list(range(1, len(sing_vals)+1)),sing_vals)
+        plt.plot(list(range(1, len(sing_vals)+1)), sing_vals)
+
+    if return_tensor:
+        buf = io.BytesIO()
+        plt.savefig(buf, format='jpeg')
+        buf.seek(0)
+        image = PIL.Image.open(buf)
+        image = transforms.ToTensor()(image)
+        plt.close()
+        return image
+    else:
+        return plt.gcf()
+
 ##this function can be used to track the sing. values training trajectory 
-def evaluate_model(model, step ,args):
-    first_batch = np.load(os.path.join(exp_dir, 'first_batch.npy'))
-    x = torch.from_numpy(first_batch).to(args.device, torch.float)
-    
-    model.eval()
-    z_, logdet_ = model(x)
-    log_probs = torch.sum(model.base_dist.log_prob(z_)+ logdet_, dim=1) 
-    np.save(os.path.join(exp_dir, 'log_probs_' + str(step) +'.npy'),log_probs.detach().cpu().numpy()) 
-     
-    
-    train_loader = torch.utils.data.DataLoader(x,batch_size=1, shuffle=False)
-    
-    # sing_values = np.zeros([args.batch_size,args.data_dim])
-    
-    eig_values = np.zeros([args.batch_size,args.data_dim,2])   
-    
-    for i, batch_data in enumerate(train_loader, 0):
-        x = batch_data[0:1,:]
-        
-        x_ = torch.autograd.Variable(x)
-        jac_ = torch.autograd.functional.jacobian(model.encode,x_)
-        #print('jac_ should be 1x2x2 but is ', jac_.shape)
-        jac_mat = jac_.reshape([args.data_dim,args.data_dim]) 
-        # U,S_x,V = torch.svd(jac_mat)
-        # sing_values[i,:] = S_x.detach().cpu().numpy()
-        
-        L,_ = torch.eig(jac_mat)
-        eig_values[i,:,:] = L.detach().cpu().numpy()
-        
-    np.save(os.path.join(exp_dir, 'sing_values_' + str(np.int(os.getenv('SLURM_ARRAY_TASK_ID'))-1) +'.npy'),sing_values) 
+with torch.no_grad():
+    def evaluate_model(model, args):
+        error_flag = False  # initialize the error flag
+
+        try:
+            first_batch = np.load(os.path.join(exp_dir, 'first_batch.npy'))
+            x = torch.from_numpy(first_batch).to(args.device, torch.float)
+
+            model.eval()
+            z_, logdet_ = model(x)
+            log_probs = torch.sum(model.base_dist.log_prob(z_) + logdet_, dim=1)
+            avg_log_prob = torch.mean(log_probs)
+
+            train_loader = torch.utils.data.DataLoader(x, batch_size=1, shuffle=False)
+
+            batch_size, data_dim = x.size(0), x.size(1)
+            sing_values = np.zeros([batch_size, data_dim])
+
+            for i, batch_data in enumerate(train_loader, 0):
+                x = batch_data[0:1, :]
+
+                x_ = torch.autograd.Variable(x)
+                jac_ = torch.autograd.functional.jacobian(model.encode, x_)
+                jac_mat = jac_.reshape([data_dim, data_dim])
+                U, S_x, V = torch.svd(jac_mat)
+                sing_values[i, :] = S_x.detach().cpu().numpy()
+
+            return avg_log_prob, sing_values, error_flag
+
+        except Exception as e:
+            error_flag = True
+            print(f"Error encountered: {e}")
+            return None, None, error_flag  # return None for avg_log_prob and sing_values in case of an error
 
 # --------------------
 # Training
@@ -237,12 +277,26 @@ def train_flow(model, train_set, val_set, loss_fn, optimizer, scheduler, args, s
         else:
             no_improvement_count += 1  # Increment the counter when there's no improvement
 
-        # Stop training if the validation loss hasn't improved for 20 epochs
-        if no_improvement_count >= 20:
-            logger.info("Stopping training early as validation loss hasn't improved for 20 epochs.")
+        if (epoch+1) % 10 == 0:
+            avg_log_prob, singular_values, error_occurred = evaluate_model(model, args)
+            if error_occurred:
+                print("A numerical error in the SVD calculation has occurred during the evaluation!")
+                print('The training is stopped here.')
+                break
+            else:
+                sub_writer.add_scalar('avg_log_prob', avg_log_prob, epoch)
+                image = plot_spectrum(singular_values, return_tensor=True, ground_truth=args.latent_dim)
+                sub_writer.add_image('Specturms', image, epoch)
+
+                image = plot_spectrum(singular_values, return_tensor=True, ground_truth=args.latent_dim, yaxis='log')
+                sub_writer.add_image('Specturms (log-yaxis)', image, epoch)
+            
+
+        # Stop training if the validation loss hasn't improved for 100 epochs
+        if no_improvement_count >= 100:
+            logger.info("Stopping training early as validation loss hasn't improved for 100 epochs.")
             break
 
-                
 
 if __name__ == '__main__':
     warnings.simplefilter("once")
