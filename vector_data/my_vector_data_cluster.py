@@ -185,7 +185,7 @@ with torch.no_grad():
 # --------------------
 # Training
 # --------------------
-def train_flow(model, train_set, val_set, loss_fn, optimizer, scheduler, args, sub_writer, double_precision=False):
+def train_flow(model, exp_dir, train_set, val_set, loss_fn, optimizer, scheduler, args, sub_writer, double_precision=False):
     best_loss = np.inf
     dtype = torch.double if double_precision else torch.float
     
@@ -284,6 +284,8 @@ def train_flow(model, train_set, val_set, loss_fn, optimizer, scheduler, args, s
                 print('The training is stopped here.')
                 break
             else:
+                np.save(os.path.join(exp_dir, 'sing_values_' + '%d' % i +'.npy'), singular_values)
+
                 sub_writer.add_scalar('avg_log_prob', avg_log_prob, epoch)
                 image = plot_spectrum(singular_values, return_tensor=True, ground_truth=args.latent_dim)
                 sub_writer.add_image('Specturms', image, epoch)
@@ -372,14 +374,15 @@ if __name__ == '__main__':
                 model, optimizer, scheduler, args.step = load_checkpoint(exp_dir,model,optimizer,scheduler)
             
             sub_writer = SummaryWriter(exp_dir) #tensorboard writer
-            train_flow(model, train_set, val_set, loss_fn, optimizer, scheduler, args, sub_writer)
+            train_flow(model, exp_dir, train_set, val_set, loss_fn, optimizer, scheduler, args, sub_writer)
             sub_writer.close()
     
         
         ####################################################
         ################# EVALUATION PART ##################
+        ''''
         logger.info("Calculating singular values on first batch:")
-        model, optimizer, scheduler, args.step = load_checkpoint(exp_dir,model,best=True)
+        model, optimizer, scheduler, args.step = load_checkpoint(exp_dir, model,best=True)
         
         if args.ID_samples > args.batch_size:
             args.ID_samples = args.batch_size
@@ -408,6 +411,7 @@ if __name__ == '__main__':
         
         np.save(os.path.join(exp_dir, 'sing_values_' + '%d' % i +'.npy'),sing_values) 
         #np.save(os.path.join(args.output_dir, 'eig_values_' + str(np.int(os.getenv('SLURM_ARRAY_TASK_ID'))-1) +'.npy'),eig_values) 
-    
+        '''
+        
     logger.info("All done...have an amazing day!")
     
