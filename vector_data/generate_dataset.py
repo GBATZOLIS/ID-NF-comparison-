@@ -18,7 +18,7 @@ parser.add_argument('--angle_std', type=float, default=-1)
 parser.add_argument('--split_ratio', type=float, default=0.88889)
 
 def get_data_generator(dataset, **kwargs):
-    if dataset == 'Ksphere':
+    if dataset.startswith('Ksphere'):
         return generate_KsphereDataset
     else:
         raise NotImplementedError
