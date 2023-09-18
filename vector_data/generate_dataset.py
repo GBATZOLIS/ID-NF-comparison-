@@ -20,6 +20,8 @@ parser.add_argument('--split_ratio', type=float, default=0.88889)
 def get_data_generator(dataset, **kwargs):
     if dataset.startswith('Ksphere'):
         return generate_KsphereDataset
+    elif dataset.startswith('line'):
+        return generate_line_dataset
     else:
         raise NotImplementedError
 
@@ -42,6 +44,18 @@ def sample_sphere(n_samples, manifold_dim, std=-1):
     else:
         sampled_angles = std * torch.randn((n_samples,manifold_dim))
         return torch.cat([polar_to_cartesian(angles) for angles in sampled_angles], dim=0)    
+
+def generate_line_dataset(n_samples, ambient_dim, noise_std, **kwargs):
+    func=[lambda x, i=i: torch.sin((i+1)*x) for i in range(ambient_dim)]
+    x=torch.rand((int(1e4),))
+    def apply_on_tensor(functions, tensor):
+        out = []
+        for i in range(tensor.shape[0]):
+            out.append(torch.tensor([f(tensor[i]) for f in functions]))
+        return torch.stack(out)
+    data = apply_on_tensor(func, x)
+    data = data + noise_std * torch.randn_like(data)
+    return data.cpu().numpy()
 
 def generate_KsphereDataset(n_samples, n_spheres, ambient_dim, 
                         manifold_dim, noise_std, embedding_type,
