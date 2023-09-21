@@ -29,8 +29,8 @@ def parse_args():
 
     parser = configargparse.ArgumentParser()
 
-    parser.add_argument("--run_on_gpu", type=bool, default=True, help="self-explanatory")
-    parser.add_argument("--multi_gpu", type=bool, default=False, help="self-explanatory")
+    parser.add_argument("--run_on_gpu", action='store_true', default=False, help="Run on GPU")
+    parser.add_argument("--multi_gpu", action='store_true', default=False, help="Use multiple GPUs")
 
     # What what what
     parser.add_argument("--modelname", type=str, default=None, help="Model name. Algorithm, latent dimension, dataset, and run are prefixed automatically.")
