@@ -252,7 +252,7 @@ def train_manifold_flow_alternating(args, dataset, model, simulator):
         parameters=[phase1_parameters, phase2_parameters],
         callbacks=[callbacks.save_model_after_every_epoch(create_filename("checkpoint", None, args))],
         trainer_kwargs=[phase1_kwargs, phase2_kwargs],
-        **meta_kwargs,
+        **meta_kwargs
     )
     learning_curves = np.vstack(learning_curves_).T
 
@@ -448,7 +448,7 @@ def train_generative_adversarial_manifold_flow_alternating(args, dataset, model,
         trainer_kwargs=[phase1_kwargs, phase2_kwargs],
         subsets=args.subsets,
         subset_callbacks=[callbacks.print_mf_weight_statistics()] if args.debug else None,
-        **meta_kwargs,
+        **meta_kwargs
     )
     learning_curves = np.vstack(learning_curves_).T
 
