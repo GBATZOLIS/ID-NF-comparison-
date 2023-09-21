@@ -175,7 +175,7 @@ def train_manifold_flow(args, dataset, model, simulator):
         callbacks=[callbacks.save_model_after_every_epoch(create_filename("checkpoint", "B", args))],
         forward_kwargs={"mode": "mf"},
         initial_epoch=args.startepoch - (args.epochs // 3),
-        **common_kwargs,
+        **common_kwargs
     )
     learning_curves_ = np.vstack(learning_curves_).T
     learning_curves = learning_curves_ if learning_curves is None else np.vstack((learning_curves, learning_curves_))
@@ -190,7 +190,7 @@ def train_manifold_flow(args, dataset, model, simulator):
         callbacks=[callbacks.save_model_after_every_epoch(create_filename("checkpoint", "C", args))],
         forward_kwargs={"mode": "mf-fixed-manifold"},
         initial_epoch=args.startepoch - (args.epochs - (args.epochs // 3)),
-        **common_kwargs,
+        **common_kwargs
     )
     learning_curves_ = np.vstack(learning_curves_).T
     learning_curves = np.vstack((learning_curves, np.vstack(learning_curves_).T))
