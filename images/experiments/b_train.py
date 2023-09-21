@@ -161,7 +161,7 @@ def train_manifold_flow(args, dataset, model, simulator):
         callbacks=[callbacks.save_model_after_every_epoch(create_filename("checkpoint", "A", args))],
         forward_kwargs={"mode": "projection"},
         initial_epoch=args.startepoch,
-        **common_kwargs,
+        **common_kwargs
     )
     learning_curves = np.vstack(learning_curves).T
 
