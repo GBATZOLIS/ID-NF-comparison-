@@ -52,9 +52,17 @@ def plot_sample_images(filename, context=None):
             plt.figure(figsize=(6 * 3.0, 5 * 3.0))
             for i in range(30):
                 plt.subplot(5, 6, i + 1)
-                plt.imshow(x[i])
+                
+                image = x[i]
+                if image.shape[2] == 1:  # Check if the image has one channel
+                    image = image.squeeze()  # Squeeze the last dimension out
+                    plt.imshow(image, cmap='gray')
+                else:  # RGB Image
+                    plt.imshow(image)
+                
                 plt.gca().get_xaxis().set_visible(False)
                 plt.gca().get_yaxis().set_visible(False)
+
             plt.tight_layout()
             plt.savefig(filename.format(i_epoch + 1))
             plt.close()

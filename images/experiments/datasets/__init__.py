@@ -12,12 +12,13 @@ from .thin_disk import ThinDiskSimulator
 from .d_sphere_simulator import d_SphereSimulator
 from .d_gaussian_simulator import d_GaussianSimulator
 from .utils import NumpyDataset
+from .squares_manifold_simulator import SquaresManifoldSimulator
 # from .mnist_simulator import MNISTSimulator
 
 logger = logging.getLogger(__name__)
 
 
-SIMULATORS = ["isomap", "d_sphere","d_gaussian", "mnist","power", "spherical_gaussian", "thin_spiral", "conditional_spherical_gaussian", "lhc", "lhc40d", "lhc2d", "imagenet", "celeba", "gan2d", "gan64d", "lorenz", "imdb"]
+SIMULATORS = ["isomap", "d_sphere","d_gaussian", "mnist","power", "spherical_gaussian", "thin_spiral", "conditional_spherical_gaussian", "lhc", "lhc40d", "lhc2d", "imagenet", "celeba", "gan2d", "gan64d", "lorenz", "imdb", "SquaresManifold", "BlobsManifold"]
 
 
 def load_simulator(args):
@@ -60,7 +61,8 @@ def load_simulator(args):
     
     elif args.dataset == "d_sphere":
         simulator = d_GaussianSimulator(data_dim = args.datadim, latent_dim=args.latent_dim, latent_distribution='uniform',noise_type=args.noise_type, epsilon=0.0)
-
+    elif args.dataset == "SquaresManifold":
+        simulator = SquaresManifoldSimulator(args)
     else:
         raise ValueError("Unknown dataset {}".format(args.dataset))
 

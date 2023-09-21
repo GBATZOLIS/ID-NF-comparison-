@@ -14,6 +14,7 @@ from torch.autograd import grad
 from torch.utils.data import DataLoader
 from torch.utils.data.sampler import SubsetRandomSampler
 from torch.nn.utils import clip_grad_norm_
+from tqdm import tqdm
 
 import random
 
@@ -149,13 +150,16 @@ class BaseTrainer(object):
             assert 0.0 < validation_split < 1.0, "Wrong validation split: {}".format(validation_split)
 
             n_samples = len(dataset)
+            print('n_samples: %d' % n_samples)
             indices = list(range(100,n_samples))  #makes sure that first 100 images are always in traning set
             split = int(np.floor(validation_split * n_samples))
             np.random.shuffle(indices)
-            train_idx, valid_idx = list(range(1,100)) + indices[split:] , indices[:split]  #makes sure that first 100 images are always in traning set
+            train_idx, valid_idx = list(range(0,100)) + indices[split:] , indices[:split]  #makes sure that first 100 images are always in traning set
 
             # np.save(create_filename("sample", "validation_index", args), valid_idx) #sanity check
             
+            print("Training partition indices: %s...", train_idx[:10])
+            print("Validation partition indices: %s...", valid_idx[:10])
             logger.debug("Training partition indices: %s...", train_idx[:10])
             logger.debug("Validation partition indices: %s...", valid_idx[:10])
 
@@ -169,14 +173,14 @@ class BaseTrainer(object):
                 # pin_memory=self.run_on_gpu,
                 num_workers=n_workers,
             )
-            val_loader = None
-            # DataLoader(
-            #     dataset,
-            #     sampler=val_sampler,
-            #     batch_size=batch_size,
-            #     # pin_memory=self.run_on_gpu,
-            #     num_workers=n_workers,
-            # )
+            #val_loader = None
+            val_loader = DataLoader(
+                 dataset,
+                 sampler=val_sampler,
+                 batch_size=batch_size,
+                 # pin_memory=self.run_on_gpu,
+                 num_workers=n_workers,
+            )
             
         return train_loader, val_loader
 
@@ -402,7 +406,10 @@ class Trainer(BaseTrainer):
         loss_contributions_train = np.zeros(n_losses)
         loss_train = [] if compute_loss_variance else 0.0
         
-        for i_batch, batch_data in enumerate(train_loader):
+         # Create tqdm progress bar for training
+        train_pbar = tqdm(enumerate(train_loader), total=len(train_loader), desc="Training", position=1, leave=True)
+
+        for i_batch, batch_data in train_pbar:
             if i_batch == 0 and i_epoch == 0:
                 x = batch_data[0]
                 print('x mean',x[0,:].mean())
@@ -410,6 +417,8 @@ class Trainer(BaseTrainer):
                 # print('first batch stats',x[0,0,0,:])
                 self.first_batch(batch_data, forward_kwargs)
                 #np.save(create_filename("sample", "first_batch", args), batch_data.detach().cpu().numpy())
+            
+            #print('batch_data size: ', batch_data.size())
             batch_loss, batch_loss_contributions = self.batch_train(
                 batch_data, loss_functions, loss_weights, optimizer, clip_gradient, parameters,sig2,noise_type,i_epoch, forward_kwargs=forward_kwargs, custom_kwargs=custom_kwargs
             )
@@ -421,6 +430,10 @@ class Trainer(BaseTrainer):
                 loss_contributions_train[i] += batch_loss_contribution
 
             self.report_batch(i_epoch, i_batch, True, batch_data, batch_loss)
+            
+            # Update tqdm description with train_loss
+            train_pbar.set_description(f"Training (loss: {batch_loss:.4f})")
+            train_pbar.refresh()
 
         loss_contributions_train /= len(train_loader)
         if compute_loss_variance:
@@ -433,7 +446,9 @@ class Trainer(BaseTrainer):
             loss_contributions_val = np.zeros(n_losses)
             loss_val = [] if compute_loss_variance else 0.0
 
-            for i_batch, batch_data in enumerate(val_loader):
+            val_pbar = tqdm(enumerate(val_loader), total=len(val_loader), desc="Validation", position=2, leave=True)
+
+            for i_batch, batch_data in val_pbar:
                 batch_loss, batch_loss_contributions = self.batch_val(batch_data, loss_functions, loss_weights,None,noise_type,i_epoch, forward_kwargs=forward_kwargs, custom_kwargs=custom_kwargs)
                 if compute_loss_variance:
                     loss_val.append(batch_loss)
@@ -443,6 +458,9 @@ class Trainer(BaseTrainer):
                     loss_contributions_val[i] += batch_loss_contribution
 
                 self.report_batch(i_epoch, i_batch, False, batch_data, batch_loss)
+                # Update tqdm description with val_loss
+                val_pbar.set_description(f"Validation (loss: {batch_loss:.4f})")
+                val_pbar.refresh()
 
             loss_contributions_val /= len(val_loader)
             if compute_loss_variance:
@@ -634,7 +652,7 @@ class ForwardTrainer(Trainer):
             forward_kwargs = {}
         
         
-        x = batch_data[0]
+        x = batch_data #batch_data[0]
 
         self._check_for_nans("Training data", x)
         
