@@ -302,7 +302,7 @@ def train_manifold_flow_sequential(args, dataset, model, simulator):
         callbacks=callbacks1,
         forward_kwargs={"mode": "projection", "return_hidden": args.uvl2reg is not None},
         initial_epoch=args.startepoch,
-        **common_kwargs,
+        **common_kwargs
     )
     learning_curves = np.vstack(learning_curves).T
 
@@ -316,7 +316,7 @@ def train_manifold_flow_sequential(args, dataset, model, simulator):
         callbacks=callbacks2,
         forward_kwargs={"mode": "mf-fixed-manifold"},
         initial_epoch=args.startepoch - args.epochs // 2,
-        **common_kwargs,
+        **common_kwargs
     )
     learning_curves = np.vstack((learning_curves, np.vstack(learning_curves_).T))
 
@@ -366,7 +366,7 @@ def train_pae_sequential(args, dataset, model, simulator):
         callbacks=callbacks1,
         forward_kwargs={"return_hidden": args.uvl2reg is not None},
         initial_epoch=args.startepoch,
-        **common_kwargs,
+        **common_kwargs
     )
     learning_curves = np.vstack(learning_curves).T
 
@@ -380,7 +380,7 @@ def train_pae_sequential(args, dataset, model, simulator):
         callbacks=callbacks2,
         forward_kwargs={},
         initial_epoch=args.startepoch - args.epochs // 2,
-        **common_kwargs,
+        **common_kwargs
     )
     learning_curves = np.vstack((learning_curves, np.vstack(learning_curves_).T))
 
@@ -408,7 +408,7 @@ def train_generative_adversarial_manifold_flow(args, dataset, model, simulator):
         callbacks=callbacks_,
         compute_loss_variance=True,
         initial_epoch=args.startepoch,
-        **common_kwargs,
+        **common_kwargs
     )
 
     learning_curves = np.vstack(learning_curves_).T
@@ -475,7 +475,7 @@ def train_flow(args, dataset, model, simulator):
         epochs=args.epochs,
         callbacks=callbacks_,
         initial_epoch=args.startepoch,
-        **common_kwargs,
+        **common_kwargs
     )
 
     learning_curves = np.vstack(learning_curves).T
@@ -504,7 +504,7 @@ def train_pie(args, dataset, model, simulator):
         callbacks=callbacks_,
         forward_kwargs={"mode": "pie"},
         initial_epoch=args.startepoch,
-        **common_kwargs,
+        **common_kwargs
     )
     learning_curves = np.vstack(learning_curves).T
     return learning_curves
@@ -533,7 +533,7 @@ def train_dnf(args, dataset, model, simulator):
         forward_kwargs={"mode": "dnf", "return_hidden": args.uvl2reg is not None},
         initial_epoch=args.startepoch,
         restart_scheduler = args.scheduler_restart,
-        **common_kwargs,
+        **common_kwargs
     )
 
     learning_curves = np.vstack(learning_curves).T
@@ -555,7 +555,7 @@ def train_dnf_hyperparameter(args, dataset, model, simulator):
         callbacks=callbacks_,
         forward_kwargs={"mode": "dnf", "return_hidden": args.uvl2reg is not None},
         initial_epoch=args.startepoch,
-        **common_kwargs,
+        **common_kwargs
     )
 
     learning_curves = np.vstack(learning_curves).T
