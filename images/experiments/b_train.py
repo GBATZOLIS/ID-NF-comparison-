@@ -515,6 +515,9 @@ def train_pie(args, dataset, model, simulator):
 
 def train_dnf(args, dataset, model, simulator):
     """ AF training """
+
+    #create the tensorboard logger here and pass the writer as argument to the train method.
+    
     trainer = ForwardTrainer(model, run_on_gpu=args.run_on_gpu, multi_gpu=args.multi_gpu) if simulator.parameter_dim() is None else ConditionalForwardTrainer(model) if args.scandal is None else SCANDALForwardTrainer(model)
     common_kwargs, scandal_loss, scandal_label, scandal_weight = make_training_kwargs(args, dataset)
     callbacks_ = [callbacks.save_model_after_every_epoch(create_filename("checkpoint", None, args))]
