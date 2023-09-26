@@ -15,10 +15,48 @@ from torch.utils.data import DataLoader
 from torch.utils.data.sampler import SubsetRandomSampler
 from torch.nn.utils import clip_grad_norm_
 from tqdm import tqdm
-
+import time
+import os
 import random
 
+import matplotlib.pyplot as plt
+import io
+import PIL
+from torchvision import transforms
+
 logger = logging.getLogger(__name__)
+
+def plot_spectrum(singular_values, return_tensor=False, title='Spectrum', ground_truth=None, yaxis='normal'):    
+    plt.rcParams.update({'font.size': 24})
+    plt.figure(figsize=(15,10))
+    plt.grid(alpha=0.5)
+    plt.title(title)
+    plt.xticks(np.arange(0, len(singular_values[0])+1, 10))
+
+    if yaxis == 'log':
+        plt.yscale('log')  # Set the y-axis to logarithmic scale
+
+    if ground_truth:
+        if isinstance(ground_truth, list):
+            for gt in ground_truth:
+                plt.axvline(x=len(singular_values[0])-gt, color='red', ls='--')
+        else:
+            plt.axvline(x=len(singular_values[0])-ground_truth, color='red', ls='--')
+
+    for sing_vals in singular_values:
+        #plt.bar(list(range(1, len(sing_vals)+1)),sing_vals)
+        plt.plot(list(range(1, len(sing_vals)+1)), sing_vals)
+
+    if return_tensor:
+        buf = io.BytesIO()
+        plt.savefig(buf, format='jpeg')
+        buf.seek(0)
+        image = PIL.Image.open(buf)
+        image = transforms.ToTensor()(image)
+        plt.close()
+        return image
+    else:
+        return plt.gcf()
 
 
 class EarlyStoppingException(Exception):
@@ -249,7 +287,10 @@ class Trainer(BaseTrainer):
         seed=None,
         initial_epoch=None,
         sig2 = 0.0,
-        noise_type = None
+        noise_type = None,
+        writer=None,
+        save_dir=None,
+        latent_dim=None
     ):
 
         if initial_epoch is not None and initial_epoch >= epochs:
@@ -327,6 +368,25 @@ class Trainer(BaseTrainer):
         for i_epoch in range(initial_epoch, epochs):
             logger.debug("Training epoch %s / %s", i_epoch + 1, epochs)
 
+            #Evaluate the singular values:
+            if (i_epoch+1) % 10 == 0:
+                first_val_batch = next(iter(val_loader))
+                sing_values, error_flag = self.evaluate_singular_values(first_val_batch)
+                if error_flag:
+                    print("A numerical error in the SVD calculation has occurred during the evaluation!")
+                    print('The training is stopped here.')
+                    break
+                else:
+                    np.save(os.path.join(save_dir, 'sing_values_' + '%d' % i_epoch +'.npy'), sing_values)
+
+                    #sub_writer.add_scalar('avg_log_prob', avg_log_prob, epoch)
+                    image = plot_spectrum(sing_values, return_tensor=True, ground_truth=latent_dim)
+                    writer.add_image('Specturms', image, i_epoch)
+
+                    image = plot_spectrum(sing_values, return_tensor=True, ground_truth=latent_dim, yaxis='log')
+                    writer.add_image('Specturms (log-yaxis)', image, i_epoch)
+            
+
             # LR schedule
             if sched is not None:
                 logger.debug("Learning rate: %s", sched.get_last_lr())
@@ -346,9 +406,15 @@ class Trainer(BaseTrainer):
                     forward_kwargs=forward_kwargs,
                     custom_kwargs=custom_kwargs,
                     compute_loss_variance=compute_loss_variance,
+                    writer=writer
                 )
                 losses_train.append(loss_train)
                 losses_val.append(loss_val)
+
+                #tensorboard logging
+                writer.add_scalar('Train_Loss_Epoch', loss_train, i_epoch)
+                writer.add_scalar('Val_Loss_Epoch', loss_val, i_epoch)
+
             except NanException:
                 logger.info("Ending training during epoch %s because NaNs appeared", i_epoch + 1)
                 raise
@@ -368,8 +434,11 @@ class Trainer(BaseTrainer):
                 for callback in callbacks:
                     callback(i_epoch, self.model, loss_train, loss_val, last_batch=self.last_batch)
 
-            # LR scheduler
+
             if sched is not None:
+                #tensorboard logging
+                logger.debug("Learning rate: %.5f", sched.get_last_lr()[0])
+                writer.add_scalar('Learning_Rate', sched.get_last_lr()[0], i_epoch)
                 sched.step()
                 if restart_scheduler is not None and (i_epoch + 1) % restart_scheduler == 0:
                     try:
@@ -381,6 +450,7 @@ class Trainer(BaseTrainer):
             self.wrap_up_early_stopping(best_model, losses_val[-1], best_loss, best_epoch)
 
         logger.debug("Training finished")
+        writer.close() #close the tensorboard writer
 
         return np.array(losses_train), np.array(losses_val)
 
@@ -399,6 +469,7 @@ class Trainer(BaseTrainer):
         forward_kwargs=None,
         custom_kwargs=None,
         compute_loss_variance=False,
+        writer=None
     ):
         n_losses = len(loss_weights)
         
@@ -433,6 +504,7 @@ class Trainer(BaseTrainer):
             
             # Update tqdm description with train_loss
             train_pbar.set_description(f"Training (loss: {batch_loss:.4f})")
+            writer.add_scalar('Train_Loss_Step', batch_loss, i_epoch * len(train_loader) + i_batch)
             train_pbar.refresh()
 
         loss_contributions_train /= len(train_loader)
@@ -460,6 +532,7 @@ class Trainer(BaseTrainer):
                 self.report_batch(i_epoch, i_batch, False, batch_data, batch_loss)
                 # Update tqdm description with val_loss
                 val_pbar.set_description(f"Validation (loss: {batch_loss:.4f})")
+                writer.add_scalar('Val_Loss_Step', batch_loss, i_epoch * len(val_loader) + i_batch)
                 val_pbar.refresh()
 
             loss_contributions_val /= len(val_loader)
@@ -605,6 +678,49 @@ class Trainer(BaseTrainer):
 
 class ForwardTrainer(Trainer):
     """ Trainer for likelihood-based flow training when the model is not conditional. """
+
+    def evaluate_singular_values(self, batch_data, points=1):
+        def get_encoder_fn(model):
+            def encoder_fn(x):
+                _, h_manifold, h_orthogonal, _, _ = self.model._encode(x)
+                return torch.cat((h_manifold, h_orthogonal), -1)
+            return encoder_fn
+
+        error_flag = False  # initialize the error flag
+        try:
+            self.model.eval()
+            encoder_fn = get_encoder_fn(self.model)
+            batchsize = points  # only considering first two points
+            loader = torch.utils.data.DataLoader(batch_data, batch_size=1, shuffle=False)
+            resolution = torch.prod(torch.tensor(batch_data[0].size()))
+            sing_values = np.zeros([batchsize, resolution])
+
+            # Use a loop to iterate over only the first two points
+            for i, batch_data in tqdm(enumerate(loader, 0)):
+                if i >= batchsize:  # If i is greater than or equal to 2, break the loop.
+                    break
+
+                #start_time = time.time()  # Start the timer
+
+                x = batch_data[0:1, :].float().to(self.device)
+                x_ = torch.autograd.Variable(x)
+                jac_ = torch.autograd.functional.jacobian(encoder_fn, x_)
+                jac_mat = jac_.reshape([resolution, resolution])
+                U, S, V = torch.svd(jac_mat)
+                sing_values[i, :] = S.detach().cpu().numpy()
+
+                #end_time = time.time()  # End the timer
+                #duration = end_time - start_time  # Calculate the time difference
+                #print(f"Iteration {i}: took {duration:.4f} seconds")
+
+
+            self.model.train()
+
+            return sing_values, error_flag
+        except Exception as e:
+            error_flag = True
+            print(f"Error encountered: {e}")
+            return None, error_flag
 
     def first_batch(self, batch_data, forward_kwargs):
         if self.multi_gpu:

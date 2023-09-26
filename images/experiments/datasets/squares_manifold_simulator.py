@@ -46,7 +46,8 @@ class SquaresManifoldSimulator(BaseSimulator):
         print('original dataset length: %d' % l)
         train_length = int(self._split_ratio * l)
         test_length = l - train_length
-        self.train_dataset, self.test_dataset = random_split(dataset, [train_length, test_length])
+        generator = torch.Generator().manual_seed(42)  # You can set any seed value
+        self.train_dataset, self.test_dataset = random_split(dataset, [train_length, test_length], generator=generator)
         print('Train dataset len: %d' % len(self.train_dataset))
         if train:
             return self.train_dataset

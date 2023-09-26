@@ -21,6 +21,9 @@ from architectures import create_model
 from architectures.create_model import ALGORITHMS
 from manifold_flow.transforms.normalization import ActNorm
 import random
+import copy
+from torch.utils.tensorboard import SummaryWriter
+
 logger = logging.getLogger(__name__)
 
 
@@ -28,6 +31,10 @@ def parse_args():
     """ Parses command line arguments for the training """
 
     parser = configargparse.ArgumentParser()
+
+    parser.add_argument("--evaluate", action="store_true", default=False, help="Evaluate mode")
+    parser.add_argument("--eval_checkpoint", type=str, default=None, help="evaluation checkpoint")
+    parser.add_argument("--ID_samples", type=int, help="ID samples")
 
     parser.add_argument("--run_on_gpu", action='store_true', default=False, help="Run on GPU")
     parser.add_argument("--multi_gpu", action='store_true', default=False, help="Use multiple GPUs")
@@ -48,6 +55,7 @@ def parse_args():
 
     #new stuff related to the SquaresMnaifold and BlobsManifold
     parser.add_argument("--image_size", type=int, default=32, help="image resolution")
+    parser.add_argument("--channels", type=int, help="Number of channels")
     parser.add_argument("--split_ratio", type=float, default=0.88889, help="dataset split ratio")
     parser.add_argument("--num_samples", type=int, default=450000, help="self-explanatory")
     parser.add_argument("--square_range", type=int, action="append", help='values of square sizes to be used')
@@ -513,11 +521,9 @@ def train_pie(args, dataset, model, simulator):
     return learning_curves
 
 
-def train_dnf(args, dataset, model, simulator):
+def train_dnf(args, dataset, model, simulator, writer):
     """ AF training """
 
-    #create the tensorboard logger here and pass the writer as argument to the train method.
-    
     trainer = ForwardTrainer(model, run_on_gpu=args.run_on_gpu, multi_gpu=args.multi_gpu) if simulator.parameter_dim() is None else ConditionalForwardTrainer(model) if args.scandal is None else SCANDALForwardTrainer(model)
     common_kwargs, scandal_loss, scandal_label, scandal_weight = make_training_kwargs(args, dataset)
     callbacks_ = [callbacks.save_model_after_every_epoch(create_filename("checkpoint", None, args))]
@@ -539,6 +545,9 @@ def train_dnf(args, dataset, model, simulator):
         forward_kwargs={"mode": "dnf", "return_hidden": args.uvl2reg is not None},
         initial_epoch=args.startepoch,
         restart_scheduler = args.scheduler_restart,
+        writer=writer,
+        save_dir=args.dir,
+        latent_dim=args.latent_dim,
         **common_kwargs
     )
 
@@ -567,7 +576,7 @@ def train_dnf_hyperparameter(args, dataset, model, simulator):
     learning_curves = np.vstack(learning_curves).T
     return learning_curves
 
-def train_model(args, dataset, model, simulator):
+def train_model(args, dataset, model, simulator, writer):
     """ Starts appropriate training """
 
     if args.algorithm == "pie":
@@ -592,7 +601,7 @@ def train_model(args, dataset, model, simulator):
         else:
             learning_curves = train_generative_adversarial_manifold_flow(args, dataset, model, simulator)
     elif args.algorithm == "dnf":
-        learning_curves = train_dnf(args, dataset, model, simulator)
+        learning_curves = train_dnf(args, dataset, model, simulator, writer)
     else:
         raise ValueError("Unknown algorithm %s", args.algorithm)
 
@@ -607,6 +616,28 @@ def fix_act_norm_issue(model):
     for _, submodel in model._modules.items():
         fix_act_norm_issue(submodel)
 
+def evaluate_model(args, dataset, model, simulator):
+    resume_path = os.path.join(args.dir, 'experiments', 'data', 'models', 'checkpoints')
+    # List all files in the folder
+    files = os.listdir(resume_path)
+    # Initialize the selected file variable to None
+    selected_file = None
+    # Loop through the files and select the one containing "last" in its name
+    for filename in files:
+        if "last" in filename:
+            selected_file = filename
+            break  # Stop searching once a matching file is found      
+    resume_path = os.path.join(resume_path, selected_file)
+    model.load_state_dict(torch.load(resume_path, map_location=torch.device("cpu")))
+    
+    trainer = ForwardTrainer(model, run_on_gpu=args.run_on_gpu, multi_gpu=args.multi_gpu)
+    train_loader, val_loader = trainer.make_dataloader(dataset, 0.25, args.batchsize)
+    first_val_batch = next(iter(val_loader))
+    sing_values, error_flag = trainer.evaluate_singular_values(first_val_batch, points=args.ID_samples)
+    if error_flag:
+        print("A numerical error in the SVD calculation has occurred during the evaluation!")
+    else:
+        np.save(os.path.join(args.dir, 'sing_values_10000.npy'), sing_values)
 
 if __name__ == "__main__":
     # Logger
@@ -617,9 +648,19 @@ if __name__ == "__main__":
     ######################################### 
 
     sigmas = args.sigmas #[1e-09, (0.68 * 255.0)**2, (100*255.0)**2 ]
+
+    # Data
+    simulator = load_simulator(args)
+    if args.dataset in ['SquaresManifold', 'BlobsManifold']:
+        dataset = simulator.load_dataset(train=True)
+    else:
+        dataset = simulator.load_dataset(train=True, dataset_dir=create_filename("dataset", None, args), limit_samplesize=args.samplesize, joint_score=args.scandal is not None)
+
+    base_args_dir = copy.copy(args.dir)
     for i in range(len(sigmas)):
         args.sig2 = sigmas[i] #sigmas[np.int(os.getenv('SLURM_ARRAY_TASK_ID'))-1]
         args.i = i #np.int(os.getenv('SLURM_ARRAY_TASK_ID'))
+        args.dir = os.path.join(base_args_dir, 'sig2_%d' % i)
     
         #args.pieepsilon = np.sqrt(args.sig2)
         #########################################
@@ -640,35 +681,35 @@ if __name__ == "__main__":
         # Bug fix related to some num_workers > 1 and CUDA. Bad things happen otherwise!
         #torch.multiprocessing.set_start_method("spawn", force=True)
 
-        # Data
-        simulator = load_simulator(args)
-        if args.dataset in ['SquaresManifold', 'BlobsManifold']:
-            dataset = simulator.load_dataset(train=True)
-        else:
-            dataset = simulator.load_dataset(train=True, dataset_dir=create_filename("dataset", None, args), limit_samplesize=args.samplesize, joint_score=args.scandal is not None)
-
         # Model
         model = create_model(args, simulator)
 
-        # Maybe load pretrained model
-        if args.resume is not None:
-            model.load_state_dict(torch.load(resume_filename, map_location=torch.device("cpu")))
-            fix_act_norm_issue(model)
-        elif args.load is not None:
-            args_ = copy.deepcopy(args)
-            args_.modelname = args.load
-            if args_.i > 0:
-                args_.modelname += "_run{}".format(args_.i)
-            logger.info("Loading model %s", args_.modelname)
-            model.load_state_dict(torch.load(create_filename("model", None, args_), map_location=torch.device("cpu")))
-            fix_act_norm_issue(model)
+        if args.evaluate:
+            evaluate_model(args, dataset, model, simulator)
+        else:
+            # Maybe load pretrained model
+            if args.resume is not None:
+                model.load_state_dict(torch.load(resume_filename, map_location=torch.device("cpu")))
+                fix_act_norm_issue(model)
+            elif args.load is not None:
+                args_ = copy.deepcopy(args)
+                args_.modelname = args.load
+                if args_.i > 0:
+                    args_.modelname += "_run{}".format(args_.i)
+                logger.info("Loading model %s", args_.modelname)
+                model.load_state_dict(torch.load(create_filename("model", None, args_), map_location=torch.device("cpu")))
+                fix_act_norm_issue(model)
 
-        # Train and save
-        learning_curves = train_model(args, dataset, model, simulator)
+            # Train and save
+            #create the tensorboard logger here and pass the writer as argument to the train method.
+            exp_dir = os.path.join(args.dir, 'logs')
+            sub_writer = SummaryWriter(exp_dir)
 
-        # Save
-        logger.info("Saving model")
-        torch.save(model.state_dict(), create_filename("model", None, args))
-        np.save(create_filename("learning_curve", None, args), learning_curves)
+            learning_curves = train_model(args, dataset, model, simulator, sub_writer)
+
+            # Save
+            logger.info("Saving model")
+            torch.save(model.state_dict(), create_filename("model", None, args))
+            np.save(create_filename("learning_curve", None, args), learning_curves)
 
     logger.info("All done! Have a nice day!")
