@@ -70,16 +70,22 @@ class CompositeTransform(Transform):
 
         else:
             total_logabsdet = torch.zeros(batch_size)
+            #print('total_logabsdet.device:', total_logabsdet.device)
             for func in funcs:
                 outputs, logabsdet = func(outputs, context)
+                #print(outputs.device, logabsdet.device)
+                #print('outputs.device:', outputs.device)
+                #print('logabsdet.device:', logabsdet.device)
                 total_logabsdet += logabsdet
             return outputs, total_logabsdet
 
     def forward(self, inputs, context=None, full_jacobian=False):
+        #device = next(self._transforms.parameters()).device
         funcs = self._transforms
         return self._cascade(inputs, funcs, context, full_jacobian)
 
     def inverse(self, inputs, context=None, full_jacobian=False):
+        #device = next(self._transforms.parameters()).device
         funcs = (transform.inverse for transform in self._transforms[::-1])
         return self._cascade(inputs, funcs, context, full_jacobian)
 

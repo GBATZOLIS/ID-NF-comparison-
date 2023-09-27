@@ -13,6 +13,7 @@ from .d_sphere_simulator import d_SphereSimulator
 from .d_gaussian_simulator import d_GaussianSimulator
 from .utils import NumpyDataset
 from .squares_manifold_simulator import SquaresManifoldSimulator
+from .blobs_manifold_simulator import BlobsManifoldSimulator
 # from .mnist_simulator import MNISTSimulator
 
 logger = logging.getLogger(__name__)
@@ -63,6 +64,8 @@ def load_simulator(args):
         simulator = d_GaussianSimulator(data_dim = args.datadim, latent_dim=args.latent_dim, latent_distribution='uniform',noise_type=args.noise_type, epsilon=0.0)
     elif args.dataset == "SquaresManifold":
         simulator = SquaresManifoldSimulator(args)
+    elif args.dataset == "BlobsManifold":
+        simulator = BlobsManifoldSimulator(args)
     else:
         raise ValueError("Unknown dataset {}".format(args.dataset))
 

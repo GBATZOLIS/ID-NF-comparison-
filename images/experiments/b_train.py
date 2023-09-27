@@ -37,6 +37,7 @@ def parse_args():
     parser.add_argument("--ID_samples", type=int, help="ID samples")
 
     parser.add_argument("--run_on_gpu", action='store_true', default=False, help="Run on GPU")
+    parser.add_argument("--device", type=int, default=0, help="GPU index")
     parser.add_argument("--multi_gpu", action='store_true', default=False, help="Use multiple GPUs")
 
     # What what what
@@ -58,11 +59,18 @@ def parse_args():
     parser.add_argument("--channels", type=int, help="Number of channels")
     parser.add_argument("--split_ratio", type=float, default=0.88889, help="dataset split ratio")
     parser.add_argument("--num_samples", type=int, default=450000, help="self-explanatory")
-    parser.add_argument("--square_range", type=int, action="append", help='values of square sizes to be used')
-    parser.add_argument("--sigmas", type=float, action="append", help="image resolution")
+    
+    #SquaresManifold specific settings
     parser.add_argument("--num_squares", type=int, default=10, help="self-explanatory")
-
-
+    parser.add_argument("--square_range", type=int, action="append", help='values of square sizes to be used')
+    
+    #BlobsManifold specific settings
+    parser.add_argument("--num_gaussians", type=int, default=10, help="num of gaussian centers for the blob dataset")
+    parser.add_argument("--std_range", type=int, action="append", help='std range of the blobs')
+    
+    #ID-NF setting
+    parser.add_argument("--sigmas", type=float, action="append", help="array of sigmas that will be used in the ID-NF method. We need at least three values.")
+    
     # Model details
     parser.add_argument("--modellatentdim", type=int, default=2, help="Model manifold dimensionality")
     parser.add_argument("--specified", action="store_true", help="Prescribe manifold chart: FOM instead of M-flow")
@@ -114,7 +122,7 @@ def parse_args():
     parser.add_argument("--seed", type=int, default=1357, help="Random seed (--i is always added to it)")
     parser.add_argument("--resume", type=int, default=None, help="Resume training at a given epoch (overwrites --load and --startepoch)")
     
-    parser.add_argument("--scheduler_restart", type=float, default=50, help="Number of Batch updates after which the LR gets reseted according to consine annealing")
+    parser.add_argument("--scheduler_restart", type=int, default=100, help="Number of Batch updates after which the LR gets reseted according to consine annealing")
     
     #for estimate d 
     parser.add_argument("--noise_type", type=str, default='uniform', help="Noise type for dequantization.")
@@ -524,7 +532,7 @@ def train_pie(args, dataset, model, simulator):
 def train_dnf(args, dataset, model, simulator, writer):
     """ AF training """
 
-    trainer = ForwardTrainer(model, run_on_gpu=args.run_on_gpu, multi_gpu=args.multi_gpu) if simulator.parameter_dim() is None else ConditionalForwardTrainer(model) if args.scandal is None else SCANDALForwardTrainer(model)
+    trainer = ForwardTrainer(model, run_on_gpu=args.run_on_gpu, multi_gpu=args.multi_gpu, device=args.device) if simulator.parameter_dim() is None else ConditionalForwardTrainer(model) if args.scandal is None else SCANDALForwardTrainer(model)
     common_kwargs, scandal_loss, scandal_label, scandal_weight = make_training_kwargs(args, dataset)
     callbacks_ = [callbacks.save_model_after_every_epoch(create_filename("checkpoint", None, args))]
     if simulator.is_image():
@@ -544,7 +552,7 @@ def train_dnf(args, dataset, model, simulator, writer):
         callbacks=callbacks_,
         forward_kwargs={"mode": "dnf", "return_hidden": args.uvl2reg is not None},
         initial_epoch=args.startepoch,
-        restart_scheduler = args.scheduler_restart,
+        restart_scheduler = args.epochs,
         writer=writer,
         save_dir=args.dir,
         latent_dim=args.latent_dim,

@@ -70,13 +70,13 @@ class NanException(Exception):
 class BaseTrainer(object):
     """ Training functionality shared between normal trainers and alternating trainers. """
 
-    def __init__(self, model, run_on_gpu=True, multi_gpu=True, double_precision=False):
+    def __init__(self, model, run_on_gpu=True, multi_gpu=True, double_precision=False, device=0):
         self.model = model
 
         self.run_on_gpu = run_on_gpu and torch.cuda.is_available()
         self.multi_gpu = self.run_on_gpu and multi_gpu and torch.cuda.device_count() > 1
 
-        self.device = torch.device("cuda" if self.run_on_gpu else "cpu")
+        self.device = torch.device("cuda:%d" % device if self.run_on_gpu else "cpu")
         self.dtype = torch.double if double_precision else torch.float
         if self.run_on_gpu and double_precision:
             torch.set_default_tensor_type("torch.cuda.DoubleTensor")
@@ -88,6 +88,10 @@ class BaseTrainer(object):
             torch.set_default_tensor_type("torch.FloatTensor")
 
         self.model = self.model.to(self.device, self.dtype)
+        # Verify everything is on the same device
+        self.model.outer_transform = self.model.outer_transform.to(self.device)
+        self.model.inner_transform = self.model.inner_transform.to(self.device)
+
         self.last_batch = None
 
         logger.info(
@@ -440,6 +444,14 @@ class Trainer(BaseTrainer):
                 logger.debug("Learning rate: %.5f", sched.get_last_lr()[0])
                 writer.add_scalar('Learning_Rate', sched.get_last_lr()[0], i_epoch)
                 sched.step()
+
+                # Check learning rate threshold
+                current_lr = sched.get_last_lr()[0]
+                lr_threshold = 1e-7
+                if current_lr < lr_threshold:
+                    logger.info("Learning rate dropped below threshold, ending training.")
+                    break
+
                 if restart_scheduler is not None and (i_epoch + 1) % restart_scheduler == 0:
                     try:
                         sched = scheduler(optimizer=opt, T_max=epochs_per_scheduler, **scheduler_kwargs)
