@@ -125,7 +125,7 @@ class FixedBlobsManifold(SyntheticDataset):
         
         x = torch.tensor(np.arange(img.size(0)))
         y = torch.tensor(np.arange(img.size(1)))
-        xx, yy = torch.meshgrid((x,y), indexing='ij')
+        xx, yy = torch.meshgrid(x, y)
 
         d = -1/(2*std**2)
         new_img = np.exp(d*((xx-center_x)**2+(yy-center_y)**2))
