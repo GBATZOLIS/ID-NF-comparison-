@@ -179,8 +179,8 @@ with torch.no_grad():
 
         except Exception as e:
             error_flag = True
-            print(f"Error encountered: {e}")
-            return None, None, error_flag  # return None for avg_log_prob and sing_values in case of an error
+            print("Error encountered: ", e)
+            return None, None, error_flag
 
 # --------------------
 # Training
@@ -241,7 +241,7 @@ def train_flow(model, exp_dir, train_set, val_set, loss_fn, optimizer, scheduler
 
             #code to update the progress bar
             avg_train_loss_for_step = cumulative_train_loss / (step+1)
-            pbar.set_description(f"Epoch {epoch+1}, Avg Loss: {avg_train_loss_for_step:.4f}")
+            pbar.set_description("Epoch %d, Avg Loss: %.4f" % (epoch+1, avg_train_loss_for_step))
 
             # Log train loss for this step
             sub_writer.add_scalar('Loss/train_step', loss.item(), (epoch * len(train_loader)) + step)
@@ -277,7 +277,7 @@ def train_flow(model, exp_dir, train_set, val_set, loss_fn, optimizer, scheduler
         else:
             no_improvement_count += 1  # Increment the counter when there's no improvement
 
-        if (epoch+1) % 10 == 0:
+        if (epoch+1) % 25 == 0:
             avg_log_prob, singular_values, error_occurred = evaluate_model(model, args)
             if error_occurred:
                 print("A numerical error in the SVD calculation has occurred during the evaluation!")
@@ -356,7 +356,7 @@ if __name__ == '__main__':
         config_path = os.path.join(exp_dir, 'config.txt')
         if not os.path.exists(config_path):
             with open(config_path, 'a') as f:
-                print(config, file=f)
+                f.write(str(config) + "\n")
     
         ####################################################
         ################# TRAINING PART $$$$$$$$$$$$$$$$$$$$

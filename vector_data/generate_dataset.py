@@ -47,7 +47,7 @@ def sample_sphere(n_samples, manifold_dim, std=-1):
 
 def generate_line_dataset(n_samples, ambient_dim, noise_std, **kwargs):
     func=[lambda x, i=i: torch.sin((i+1)*x) for i in range(ambient_dim)]
-    x=torch.rand((int(1e4),))
+    x=torch.rand((int(args.n_samples),))
     def apply_on_tensor(functions, tensor):
         out = []
         for i in range(tensor.shape[0]):
