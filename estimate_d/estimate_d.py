@@ -79,7 +79,7 @@ def main(config_path, read_base_path, save_path):
         print(config.keys())
         n_sigmas = int(config['n_sigmas']) 
         datadim = int(config['data_dim'])
-        batch_size = int(config['ID_samples'])
+        #batch_size = int(config['ID_samples'])
         sig2_0 = float(config['sig2_min'])
         sig2_1 = float(config['sig2_max'])
 
@@ -89,6 +89,9 @@ def main(config_path, read_base_path, save_path):
             sigmas[k+1] = sigmas[k] * np.exp(delta)
         
         sing_values_batch = read_singular_values(read_base_path, n_sigmas, data_type)
+
+        batch_size = sing_values_batch.shape[1]
+
     
     elif data_type == 'image':
         sigmas = args.sigmas
@@ -102,7 +105,7 @@ def main(config_path, read_base_path, save_path):
         os.makedirs(save_path)
 
     local_estimator = False
-    plot = True
+    plot = False
     if local_estimator:
         d_hat = np.zeros(batch_size)
         if plot:
@@ -117,7 +120,7 @@ def main(config_path, read_base_path, save_path):
 
         for k in range(batch_size):
             sing_values = sing_values_batch[:,k,:]
-            d_hat[k] = ID_NF_estimator(sing_values, sigmas, datadim, mode=data_type, latent_dim=args.latent_dim, plot=True, tag=str(k), save_path=save_path)
+            d_hat[k] = ID_NF_estimator(sing_values, sigmas, datadim, mode=data_type, latent_dim=args.latent_dim, plot=False, tag=str(k), save_path=save_path)
         print('--estimate mean ', d_hat.mean())
     else:
         if plot:
@@ -134,7 +137,8 @@ def main(config_path, read_base_path, save_path):
         d_hat = np.zeros(batch_size)
         for k in range(batch_size):
             sing_values = sing_values_batch[:,k,:]
-            d_hat[k] = ID_NF_estimator(sing_values, sigmas, datadim, mode=data_type, latent_dim=args.latent_dim, plot=True, tag=str(k), save_path=save_path)
+            d_hat[k] = ID_NF_estimator(sing_values, sigmas, datadim, mode=data_type, latent_dim=args.latent_dim, plot=False, tag=str(k), save_path=save_path)
+            print(d_hat[k])
         
         print(d_hat)
         d_hat = d_hat.mean()
