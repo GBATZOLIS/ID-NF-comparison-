@@ -70,7 +70,8 @@ def parse_args():
     
     #ID-NF setting
     parser.add_argument("--sigmas", type=float, action="append", help="array of sigmas that will be used in the ID-NF method. We need at least three values.")
-    
+    parser.add_argument("--completed_sigmas", type=float, action="append", help="array of completed sigmas")
+
     # Model details
     parser.add_argument("--modellatentdim", type=int, default=2, help="Model manifold dimensionality")
     parser.add_argument("--specified", action="store_true", help="Prescribe manifold chart: FOM instead of M-flow")
@@ -666,6 +667,9 @@ if __name__ == "__main__":
 
     base_args_dir = copy.copy(args.dir)
     for i in range(len(sigmas)):
+        if sigmas[i] in args.completed_sigmas:
+            continue
+            
         args.sig2 = sigmas[i] #sigmas[np.int(os.getenv('SLURM_ARRAY_TASK_ID'))-1]
         args.i = i #np.int(os.getenv('SLURM_ARRAY_TASK_ID'))
         args.dir = os.path.join(base_args_dir, 'sig2_%d' % i)
