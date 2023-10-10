@@ -713,24 +713,24 @@ class ForwardTrainer(Trainer):
                     break
 
                 
-                start_time = time.time()  # Start the timer
+                #start_time = time.time()  # Start the timer
 
                 x = batch_data[0:1, :].float().to(self.device)
                 x_ = torch.autograd.Variable(x)
                 jac_ = torch.autograd.functional.jacobian(encoder_fn, x_)
                 
-                end_time = time.time()  # End the timer
-                duration = end_time - start_time  # Calculate the time difference
-                print(f"Jacobian calculation: took {duration:.4f} seconds")
+                #end_time = time.time()  # End the timer
+                #duration = end_time - start_time  # Calculate the time difference
+                #print(f"Jacobian calculation: took {duration:.4f} seconds")
 
-                start_time = time.time()
+                #start_time = time.time()
                 jac_mat = jac_.reshape([resolution, resolution])
                 U, S, V = torch.svd(jac_mat)
                 sing_values[i, :] = S.detach().cpu().numpy()
 
-                end_time = time.time()  # End the timer
-                duration = end_time - start_time  # Calculate the time difference
-                print(f"SVD calculation: took {duration:.4f} seconds")
+                #end_time = time.time()  # End the timer
+                #duration = end_time - start_time  # Calculate the time difference
+                #print(f"SVD calculation: took {duration:.4f} seconds")
 
                 
                 
