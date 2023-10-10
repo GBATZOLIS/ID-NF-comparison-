@@ -667,7 +667,7 @@ if __name__ == "__main__":
 
     base_args_dir = copy.copy(args.dir)
     for i in range(len(sigmas)):
-        if sigmas[i] in args.completed_sigmas:
+        if args.completed_sigmas is not None and sigmas[i] in args.completed_sigmas:
             continue
             
         args.sig2 = sigmas[i] #sigmas[np.int(os.getenv('SLURM_ARRAY_TASK_ID'))-1]
