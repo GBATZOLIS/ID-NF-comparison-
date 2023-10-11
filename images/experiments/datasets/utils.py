@@ -137,7 +137,8 @@ class UnlabelledImageDataset(Dataset):
         #logger.info('img with index %s',index)
         if self.transform is not None:
             img = self.transform(img)
-        return img, torch.tensor([0.0])
+        #return img, torch.tensor([0.0])
+        return img
 
     def __len__(self):
         return self.data.shape[0]

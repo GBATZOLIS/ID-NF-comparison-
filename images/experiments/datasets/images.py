@@ -129,12 +129,7 @@ class FFHQStyleGAN64DLoader(BaseImageLoader):
             scale_factor=scale_factor,
             n_bits=8,
             random_horizontal_flips=False,
-            gdrive_file_ids={
-                "train": "1TsrUWSCcuRjOsUSpCn_HvlzC-Cz3HOKS",
-                "test": "1gJuOOm9x5sNytuKmYqZ83-ieicfJsXj5",
-                "params_train": "1MmIAfT2uvAC7fuC92KxNRQJUAUxsnXZr",
-                "params_test": "1day5UUZBRxAfvQsmKxir8KL1RAYbsIY9",
-            },
+            gdrive_file_ids=None
         )
         
 

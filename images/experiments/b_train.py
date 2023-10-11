@@ -137,6 +137,7 @@ def parse_args():
     # Other settings
     parser.add_argument("-c", is_config_file=True, type=str, help="Config file path")
     parser.add_argument("--dir", type=str, default="/scratch/jb6504/manifold-flow", help="Base directory of repo")
+    parser.add_argument("--dataset_dir", type=str, default="/scratch/jb6504/manifold-flow", help="Base directory of repo")
     parser.add_argument("--debug", action="store_true", help="Debug mode (more log output, additional callbacks)")
 
     args = parser.parse_args()
@@ -663,7 +664,7 @@ if __name__ == "__main__":
     if args.dataset in ['SquaresManifold', 'BlobsManifold']:
         dataset = simulator.load_dataset(train=True)
     else:
-        dataset = simulator.load_dataset(train=True, dataset_dir=create_filename("dataset", None, args), limit_samplesize=args.samplesize, joint_score=args.scandal is not None)
+        dataset = simulator.load_dataset(train=True, dataset_dir=args.dataset_dir, limit_samplesize=args.samplesize, joint_score=args.scandal is not None)
 
     base_args_dir = copy.copy(args.dir)
     for i in range(len(sigmas)):
