@@ -61,12 +61,27 @@ def read_singular_values(read_base_path, n_sigmas, data_type='vector'):
             # Construct the filename for the numpy array with the highest index
             highest_index_filename = f"sing_values_{max_index}.npy"
 
+            print(highest_index_filename)
+
             # Load the numpy array with the highest index
             singular_values = np.load(os.path.join(folder_path, highest_index_filename))
             sing_values_batch.append(singular_values)
         sing_values_batch = np.stack(sing_values_batch)
         print(sing_values_batch.shape)
     return sing_values_batch
+
+def OurEstimator(s):
+    def softmax(x):
+        """Compute softmax values for each sets of scores in x."""
+        e_x = np.exp(x - np.max(x))
+        return e_x / e_x.sum(axis=0) # only difference
+    
+    norm_factor = s[1]-s[2]
+    diff = [(s[i]-s[i+1])/norm_factor for i in range(1, len(s)-1)]
+    soft = softmax(diff)
+    dim = len(soft)-soft.argmax()
+    return dim
+
 
 def main(config_path, read_base_path, save_path):
     #config_path is given for vector data. For image data we use a configuration file
@@ -95,6 +110,7 @@ def main(config_path, read_base_path, save_path):
     
     elif data_type == 'image':
         sigmas = args.sigmas
+        print(sigmas)
         batch_size = args.ID_samples
         datadim = args.datadim
         sing_values_batch = read_singular_values(read_base_path, len(sigmas), data_type)
@@ -105,7 +121,7 @@ def main(config_path, read_base_path, save_path):
         os.makedirs(save_path)
 
     local_estimator = False
-    plot = False
+    plot = True
     if local_estimator:
         d_hat = np.zeros(batch_size)
         if plot:
@@ -126,10 +142,14 @@ def main(config_path, read_base_path, save_path):
         if plot:
             fig = plt.figure(figsize=(20,10))
             ax = fig.add_subplot(111)
-            for s in range(len(sigmas)):
-                ax.plot(np.sort(sing_values_batch[s,0,:])[::-1], label=sigmas[s])
-            plt.legend()
+            #for s in range(len(sigmas)):
+            #    ax.plot(np.sort(sing_values_batch[s,0,:])[::-1], label=sigmas[s])
+            for k in range(batch_size):
+                ax.plot(np.sort(sing_values_batch[0,k,:])[::-1])
+
+            #plt.legend()
             plt.yscale('log')#, nonposy='clip')
+            print(datadim-args.latent_dim)
             ax.axvline(x=datadim-args.latent_dim, color='red')
             #plt.xscale('log')#, nonposx='clip')
             plt.savefig(os.path.join(save_path, 'sing_values_vs_sig2'+'.pdf'))
@@ -137,7 +157,9 @@ def main(config_path, read_base_path, save_path):
         d_hat = np.zeros(batch_size)
         for k in range(batch_size):
             sing_values = sing_values_batch[:,k,:]
-            d_hat[k] = ID_NF_estimator(sing_values, sigmas, datadim, mode=data_type, latent_dim=args.latent_dim, plot=False, tag=str(k), save_path=save_path)
+            #d_hat[k] = ID_NF_estimator(sing_values, sigmas, datadim, mode=data_type, latent_dim=args.latent_dim, plot=False, tag=str(k), save_path=save_path)
+            svd = np.log(np.sort(sing_values_batch[0,k,:])[::-1])
+            d_hat[k] = OurEstimator(svd)
             print(d_hat[k])
         
         print(d_hat)
@@ -147,11 +169,11 @@ def main(config_path, read_base_path, save_path):
     np.save(os.path.join(save_path, 'd_hat.npy'), d_hat)
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Estimate key quantity from saved singular values.")
-    parser.add_argument("-c", is_config_file=True, type=str, help="Config file path", required=False)
+    parser = configargparse.ArgumentParser(description="Estimate key quantity from saved singular values.")
+    
     parser.add_argument("--config_path", type=str, default=None, help="Path to the configuration file.", required=False)
-    parser.add_argument("--read_path", type=str, default='./', help="Base read path.")
-    parser.add_argument("--save_path", type=str, default="outputs", help="Path where to save the output files.")
+    parser.add_argument("--read_path", type=str, default=None, help="Base read path.")
+    parser.add_argument("--save_path", type=str, default=None, help="Path where to save the output files.")
 
     # Define the arguments needed for ther loading of the image config
     parser.add_argument("--dataset", type=str, default="SquaresManifold", help="Dataset name")
@@ -163,8 +185,12 @@ if __name__ == "__main__":
     parser.add_argument("--num_samples", type=int, default=50000, help="Number of samples")
     parser.add_argument("--num_squares", type=int, default=10, help="Number of squares")
     parser.add_argument("--square_range", nargs="+", type=int, default=[3, 5], help="Square range")
+    #BlobsManifold specific settings
+    parser.add_argument("--num_gaussians", type=int, default=10, help="num of gaussian centers for the blob dataset")
+    parser.add_argument("--std_range", type=int, action="append", help='std range of the blobs')
     parser.add_argument("--seed", type=int, default=100, help="Random seed")
-    parser.add_argument("--sigmas", nargs="+", type=float, default=[1e-09, 1e-1, 1], help="Sigmas")
+    parser.add_argument("--sigmas", nargs="+", type=float, default=[1e-09, 1e-3, 1e-1], help="Sigmas")
+    parser.add_argument("--completed_sigmas", type=float, action="append", help="array of completed sigmas")
     parser.add_argument("--ID_samples", type=int, default=10, help="ID samples")
     parser.add_argument("--algorithm", type=str, default="dnf", help="Algorithm")
     parser.add_argument("--modelname", type=str, default="paper", help="Model name")
@@ -196,8 +222,18 @@ if __name__ == "__main__":
     parser.add_argument("--dropout", type=float, default=0.0, help="Dropout rate")
     parser.add_argument("--debug", action="store_false", default=False, help="Debug mode")
     parser.add_argument("--dir", type=str, default="/store/CIA/gb511/projects/dim_estimation/experiments/ID-NF/SquaresManifold", help="Directory path")
+    parser.add_argument("--evaluate", action="store_true", default=False, help="Evaluate mode")
+    parser.add_argument("--eval_checkpoint", type=str, default=None, help="evaluation checkpoint")
+
+    parser.add_argument("-c", is_config_file=True, type=str, help="Config file path", required=False)
 
     args = parser.parse_args()
+
+    if args.read_path is None:
+        args.read_path = args.dir
     
+    if args.save_path is None:
+        args.save_path = args.dir
+
     main(args.config_path, args.read_path, args.save_path)
 
