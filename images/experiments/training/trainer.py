@@ -89,8 +89,8 @@ class BaseTrainer(object):
 
         self.model = self.model.to(self.device, self.dtype)
         # Verify everything is on the same device
-        self.model.outer_transform = self.model.outer_transform.to(self.device)
-        self.model.inner_transform = self.model.inner_transform.to(self.device)
+        #self.model.outer_transform = self.model.outer_transform.to(self.device)
+        #self.model.inner_transform = self.model.inner_transform.to(self.device)
 
         self.last_batch = None
 
@@ -694,8 +694,10 @@ class ForwardTrainer(Trainer):
     def evaluate_singular_values(self, batch_data, points=1):
         def get_encoder_fn(model):
             def encoder_fn(x):
-                _, h_manifold, h_orthogonal, _, _ = self.model._encode(x)
-                return torch.cat((h_manifold, h_orthogonal), -1)
+                h_manifold, h_orthogonal = self.model._encode(x)
+                h_manifold = h_manifold.view(h_manifold.size(0), -1)
+                h_orthogonal = h_orthogonal.view(h_orthogonal.size(0), -1)  
+                return torch.cat((h_manifold, h_orthogonal), -1)[:1024,:1024]
             return encoder_fn
 
         error_flag = False  # initialize the error flag

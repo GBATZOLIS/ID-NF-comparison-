@@ -182,6 +182,7 @@ def train_manifold_flow(args, dataset, model, simulator):
         callbacks=[callbacks.save_model_after_every_epoch(create_filename("checkpoint", "A", args))],
         forward_kwargs={"mode": "projection"},
         initial_epoch=args.startepoch,
+        save_dir=args.dir,
         **common_kwargs
     )
     learning_curves = np.vstack(learning_curves).T
@@ -476,7 +477,7 @@ def train_generative_adversarial_manifold_flow_alternating(args, dataset, model,
     return learning_curves
 
 
-def train_flow(args, dataset, model, simulator):
+def train_flow(args, dataset, model, simulator, writer):
     """ AF training """
     trainer = ForwardTrainer(model) if simulator.parameter_dim() is None else ConditionalForwardTrainer(model) if args.scandal is None else SCANDALForwardTrainer(model)
     common_kwargs, scandal_loss, scandal_label, scandal_weight = make_training_kwargs(args, dataset)
@@ -496,6 +497,8 @@ def train_flow(args, dataset, model, simulator):
         epochs=args.epochs,
         callbacks=callbacks_,
         initial_epoch=args.startepoch,
+        writer=writer,
+        save_dir=args.dir,
         **common_kwargs
     )
 
@@ -592,7 +595,7 @@ def train_model(args, dataset, model, simulator, writer):
     if args.algorithm == "pie":
         learning_curves = train_pie(args, dataset, model, simulator)
     elif args.algorithm == "flow":
-        learning_curves = train_flow(args, dataset, model, simulator)
+        learning_curves = train_flow(args, dataset, model, simulator,writer)
     elif args.algorithm in ["mf", "emf"]:
         if args.alternate:
             learning_curves = train_manifold_flow_alternating(args, dataset, model, simulator)
@@ -638,7 +641,7 @@ def evaluate_model(args, dataset, model, simulator):
             selected_file = filename
             break  # Stop searching once a matching file is found      
     resume_path = os.path.join(resume_path, selected_file)
-    model.load_state_dict(torch.load(resume_path, map_location=torch.device("cpu")))
+    model.load_state_dict(torch.load('/home/td314/Github/ID-NF-comparison-/blob_logs/sig2_2/experiments/data/models/checkpoints/flow_2_BlobsManifold_july_run2_epoch_last.pt', map_location=torch.device("cpu")))
     
     trainer = ForwardTrainer(model, run_on_gpu=args.run_on_gpu, multi_gpu=args.multi_gpu)
     train_loader, val_loader = trainer.make_dataloader(dataset, 0.25, args.batchsize)
@@ -647,7 +650,7 @@ def evaluate_model(args, dataset, model, simulator):
     if error_flag:
         print("A numerical error in the SVD calculation has occurred during the evaluation!")
     else:
-        np.save(os.path.join(args.dir, 'sing_values_10000.npy'), sing_values)
+        np.save(os.path.join(args.dir, 'sing_values_1e1.npy'), sing_values)
 
 if __name__ == "__main__":
     # Logger
@@ -681,7 +684,7 @@ if __name__ == "__main__":
                                       
         if args.resume is not None:                          
             resumes = [222,222,220]
-            args.resume = resumes[np.int(os.getenv('SLURM_ARRAY_TASK_ID'))-1]
+            args.resume = resumes[int(os.getenv('SLURM_ARRAY_TASK_ID'))-1]
             resume_filename = create_filename("resume", None, args)
             args.startepoch = args.resume
             logger.info("Resuming training. Loading file %s and continuing with epoch %s.", resume_filename, args.resume + 1)
